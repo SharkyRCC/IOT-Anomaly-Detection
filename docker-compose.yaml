@@ -1,0 +1,145 @@
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: iot_user
+      POSTGRES_PASSWORD: iot_secure_password
+      POSTGRES_DB: iot_airflow_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iot_user -d iot_airflow_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-webserver:
+    image: apache/airflow:2.6.1-python3.8
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://iot_user:iot_secure_password@postgres/iot_airflow_db
+      AIRFLOW__CORE__FERNET_KEY: pZgHMm_AsVUAxzxDRiNLq_s2xFs8wnvxRalvWi-_01E=
+      AIRFLOW__WEBSERVER__WORKERS: "2"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "True"
+      # NEW: ML-specific environment variables
+      ML_MODEL_PATH: "/opt/airflow/ml_models"
+      ML_ARTIFACTS_PATH: "/opt/airflow/ml_artifacts"
+      PYTHONPATH: "/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/ml_models"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./requirements.txt:/requirements.txt
+      # NEW: ML model storage volume
+      - ml_models:/opt/airflow/ml_models
+      - ml_artifacts:/opt/airflow/ml_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # NEW: Resource limits for ML workloads
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    command: >
+      bash -c "
+      pip install --user -r /requirements.txt &&
+      airflow db upgrade &&
+      airflow users create --username admin --firstname IoT --lastname Admin --role Admin --email iot-admin@company.com --password IoTAdmin2024 &&
+      airflow webserver
+      "
+
+  airflow-scheduler:
+    image: apache/airflow:2.6.1-python3.8
+    env_file:
+      - .env
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://iot_user:iot_secure_password@postgres/iot_airflow_db
+      AIRFLOW__CORE__FERNET_KEY: pZgHMm_AsVUAxzxDRiNLq_s2xFs8wnvxRalvWi-_01E=
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      # NEW: ML-specific environment variables
+      ML_MODEL_PATH: "/opt/airflow/ml_models"
+      ML_ARTIFACTS_PATH: "/opt/airflow/ml_artifacts"
+      PYTHONPATH: "/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/ml_models"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./requirements.txt:/requirements.txt
+      # NEW: ML model storage volume
+      - ml_models:/opt/airflow/ml_models
+      - ml_artifacts:/opt/airflow/ml_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # NEW: Resource limits for ML workloads
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    command: >
+      bash -c "
+      pip install --user -r /requirements.txt &&
+      airflow scheduler
+      "
+
+  # NEW: Optional dedicated ML worker for heavy ML processing
+  # Uncomment if you need isolated ML processing capabilities
+  # ml-worker:
+  #   image: apache/airflow:2.6.1-python3.8
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  #     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://iot_user:iot_secure_password@postgres/iot_airflow_db
+  #     AIRFLOW__CORE__FERNET_KEY: pZgHMm_AsVUAxzxDRiNLq_s2xFs8wnvxRalvWi-_01E=
+  #     ML_MODEL_PATH: "/opt/airflow/ml_models"
+  #     ML_ARTIFACTS_PATH: "/opt/airflow/ml_artifacts"
+  #     PYTHONPATH: "/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/ml_models"
+  #   volumes:
+  #     - ./dags:/opt/airflow/dags
+  #     - ./logs:/opt/airflow/logs
+  #     - ./plugins:/opt/airflow/plugins
+  #     - ./requirements.txt:/requirements.txt
+  #     - ml_models:/opt/airflow/ml_models
+  #     - ml_artifacts:/opt/airflow/ml_artifacts
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 8G
+  #         cpus: '4.0'
+  #       reservations:
+  #         memory: 4G
+  #         cpus: '2.0'
+  #   command: >
+  #     bash -c "
+  #     pip install --user -r /requirements.txt &&
+  #     airflow worker
+  #     "
+
+volumes:
+  postgres_data:
+  # NEW: Persistent storage for ML models and artifacts
+  ml_models:
+    driver: local
+  ml_artifacts:
+    driver: local
